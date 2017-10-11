@@ -7,20 +7,20 @@ import re
 import pandas as pd
 import numpy as np
 import datetime
+import functools
 import inspect
 from concurrent.futures import ProcessPoolExecutor
-import copy
-import patsy
 from bokeh.layouts import row, column, widgetbox, Spacer
 from bokeh.models.widgets.markups import Paragraph
 from bokeh.plotting import figure, show
-from bokeh.models import ColumnDataSource, CustomJS
+from bokeh.models import ColumnDataSource
 from bokeh.models.tools import HoverTool, WheelZoomTool
-from bokeh.models.widgets import Button, RadioButtonGroup
-from bokeh.models.widgets import Slider, Select, DataTable, TableColumn, NumberFormatter
+from bokeh.models.widgets import Button, Toggle, RadioButtonGroup, CheckboxButtonGroup
+from bokeh.models.widgets import Select, TableColumn, NumberFormatter
 from bokeh.io import curdoc
 from bokeh.models.widgets.inputs import  TextInput
 from bokeh.models.widgets import Button
+from bokeh.plotting import Figure
 from bokeh.client import push_session
 from os.path import expanduser
 import bokeh_utils as bu
@@ -31,58 +31,112 @@ mod_fpath = os.path.abspath(__file__)
 mod_fname = os.path.split(mod_fpath)[1]
 mod_fbase = os.path.splitext(mod_fname)[0]
 
+def close_session():
+    global session
+    session.close()
+    TheDoc.clear()
+    #TheDoc.delete_modules()
+    print ("Done")
 
-MetaSource = ColumnDataSource()
-MetaSource.name = "Meta"
-MetaTable = bu.data_table(source=MetaSource,
-                            width=600)
-MetaTable.name = "MetaTable"
+MakeScatterPlot = Toggle(label="MakeScatter")
 
-ChosenSource = ColumnDataSource()
-ChosenSource.name = "ChosenSource"
-ChosenTable = bu.data_table(source=ChosenSource,
-                            width=900)
-ChosenTable.name = "ChosenTable"
 MessageBox = Paragraph(text="Go")
-layout = column(MessageBox,
-                column(bu.child_in_widgetbox(MetaTable),
-                    bu.child_in_widgetbox(ChosenTable)),)
+CloseButton = Button(label="Close")
+CloseButton.on_click(close_session)
+RowFilter = TextInput(value="")
+ColumnChooser = CheckboxButtonGroup()
 
-oldcurdoc = bio.curdoc()
-currentstate = bio.curstate()
 TheDoc = Document(title="NewDoc")
-TheDoc.add_root(layout)
+TheDoc.name = "TheDoc"
 
 
-def setup_chosen(fpath):
-
-    try:
-        df = pd.DataFrame.from_csv(fpath)
-    except Exception as exc:
-        msg = str(exc)
-        MessageBos.text = msg
-    bu.update_source_data(dom=layout,
-                          source=ChosenSource, df=df)
-    bu.update_table_source(dom=layout, table=ChosenTable, width=900)
-    df = bu.df_summary(df)
-    bu.update_source_data(dom=layout, source=MetaSource, df=df)
-    bu.update_table_source(dom=layout, table=MetaTable, width=600)
-
-FilePath = None
-session = None
 def setup(fpath=None):
     global session
     global FilePath
     FilePath = fpath
-    #TheDoc.title = str(fpath)
+    TheDoc.title = str(fpath)
     session = push_session(TheDoc)
-    message = fpath
-    setup_chosen(fpath=fpath)
+
+    layout = setup_chosen(fpath=fpath)
+    TheDoc.add_root(layout)
 
     TheDoc.add_periodic_callback(session_update, 2000)
     session.show(layout)
-    res = session_diagnostics(session)
+    session_diagnostics(session)
     session.loop_until_closed()
+
+def make_scatter(new, dom):
+    MessageBox.text = str(new)
+    Xselect = dom.select_one(dict(name='ScatterPlotX'))
+    Yselect = dom.select_one(dict(name='ScatterPlotY'))
+    ChosenSource = dom.select_one(dict(name='ChosenSource'))
+    ssource = dom.select_one(dict(name='ScatterSource'))
+    ssource.data = dict(X=ChosenSource.data[Xselect.value],
+                              Y=ChosenSource.data[Yselect.value])
+
+    
+
+
+    print 'here'
+
+def setup_chosen(fpath):
+    try:
+        df = pd.DataFrame.from_csv(fpath)
+    except Exception as exc:
+        msg = str(exc)
+        MessageBox.text = msg
+    dfcols = list(df.columns)
+
+    ChosenSource = ColumnDataSource()
+    ChosenSource.data = bu.column_data_source_data_from_df(df)
+    ChosenSource.name = "ChosenSource"
+    ChosenTable = bu.data_table(source=ChosenSource,
+                                               columns=dfcols,
+                                               width=800)
+    ChosenTable.name = "ChosenTable"
+
+    metadf = bu.df_summary(df)
+    MetaSource = ColumnDataSource()
+    MetaSource.name = "MetaSource"
+    MetaSource.data = bu.column_data_source_data_from_df(metadf)
+    MetaTable = bu.data_table(source=MetaSource,
+                               columns=list(metadf.columns),
+                                       width=600)
+    MetaTable.name = "MetaTable"
+
+    RowFilter.value = ("# enter row filter conditions here")
+    ScatterPlotX = Select(options = dfcols,
+                          value=dfcols[0])
+    ScatterPlotX.name = 'ScatterPlotX'
+    ScatterPlotY = Select(options = dfcols,
+                          value=dfcols[-1])
+    ScatterPlotY.name = 'ScatterPlotY'
+    ScatterSource = ColumnDataSource()
+    ScatterSource.name = 'ScatterSource'
+    ScatterSource.data = dict(X=ChosenSource.data[ScatterPlotX.value],
+                              Y=ChosenSource.data[ScatterPlotY.value])
+    ScatterPlot = Figure(height=500, width=600)
+    res = ScatterPlot.scatter(x='X',
+                         y='Y',
+                         source=ScatterSource)
+    res.name = "srender"
+    ScatterPlot.name = 'ScatterPlot'
+
+    layout= column(MessageBox, CloseButton,
+                RowFilter,
+                ColumnChooser,
+                column(bu.child_in_widgetbox(MetaTable),
+                    bu.child_in_widgetbox(ChosenTable)),
+                row(ScatterPlotX, ScatterPlotY, MakeScatterPlot),
+                ScatterPlot,)
+    MakeScatterPlot.on_click(functools.partial(make_scatter, dom=layout))
+    currentstate = bio.curstate()
+
+    return layout
+
+
+FilePath = None
+session = None
 
 def get_function_name(stackpos=1):
     '''  call me to get your name
@@ -101,11 +155,6 @@ def session_update():
         msg += session_diagnostics(session)
     logger = logging.getLogger(__name__)
     logger.info(msg)
-    Timer.text += "<p>" + str(datetime.datetime.now())
-
-def go(vobj):
-    print (vobj)
-    return
 
 def doc_diagnostics(doc):
     js = doc.to_json_string(indent=2)
@@ -133,7 +182,6 @@ def session_diagnostics(session):
 def on_server_loaded(server_context):
     ''' If present, this function is called when the server first starts. '''
     print( "server loaded")
-    pass
 
 def on_server_unloaded(server_context):
     ''' If present, this function is called when the server shuts down. '''
@@ -155,7 +203,6 @@ if __name__ == "__main__":
     currentdoc = curdoc()
     session = push_session(curdoc())
     curdoc().add_periodic_callback(session_update, 2000)
-    session.show(layout)
-    res = session_diagnostics(session)
-    from bokeh.util.browser import get_browser_controller
+    #session.show(layout)
+    session_diagnostics(session)
     session.loop_until_closed()

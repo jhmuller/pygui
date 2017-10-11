@@ -1,13 +1,12 @@
 
 import os
-import psutil
-import sys
 import logging
 import re
 import pandas as pd
 import numpy as np
 import datetime
 import inspect
+from concurrent.futures import ProcessPoolExecutor
 import copy
 import patsy
 from bokeh.layouts import row, column, widgetbox, Spacer
@@ -16,14 +15,14 @@ from bokeh.plotting import figure, show
 from bokeh.models import ColumnDataSource, CustomJS
 from bokeh.models.tools import HoverTool, WheelZoomTool
 from bokeh.models.widgets import Button, RadioButtonGroup
-from bokeh.models.widgets import Slider, Select, DataTable, TableColumn, NumberFormatter
+from bokeh.models.widgets import Slider, DataTable, TableColumn
 from bokeh.io import curdoc
-from bokeh.models.widgets.inputs import  TextInput
 from bokeh.models.widgets import Button
 from bokeh.client import push_session
 from os.path import expanduser
 import bokeh_utils as bu
-import bokeh_minimal as bm
+import frame_analyzer as fa
+
 
 mod_fpath = os.path.abspath(__file__)
 mod_fname = os.path.split(mod_fpath)[1]
@@ -31,6 +30,7 @@ mod_fbase = os.path.splitext(mod_fname)[0]
 
 CurDir = expanduser("~")
 
+ProcPool = ProcessPoolExecutor()
 
 def list_curdir():
     res = os.listdir(CurDir)
@@ -122,8 +122,6 @@ def file_select(attr, old, new):
         return
     fpath = os.path.join(fdir, csvfiles[0])
 
-    df = pd.DataFrame.from_csv(fpath)
-    ChosenSource.data = bu.source_data_from_df(df)
 
 
 cfg = bu.config()
@@ -188,29 +186,15 @@ def update_chosen(attr, old, new):
         df = pd.DataFrame.from_csv(fpath)
     except Exception as exc:
         msg = str(exc)
-        MessageBos.text = msg
-    bm.main(fpath=fpath)
-    bu.update_source_data(dom=layout,
-                          source=ChosenSource, df=df)
-    bu.update_table_source(dom=layout, table=ChosenTable, width=900)
-    df = bu.df_summary(df)
-    bu.update_source_data(dom=layout, source=MetaSource, df=df)
-    bu.update_table_source(dom=layout, table=MetaTable, width=600)
+        MessageBox.text = msg
+    kwargs = dict(fpath=fpath)
+    #fa.setup(fpath=fpath)
+    ProcPool.submit(fa.setup, **kwargs)
+    MessageBox.text = "We're back"
 
 
 files_source.on_change("selected", update_chosen)
 
-MetaSource = ColumnDataSource()
-MetaSource.name = "Meta"
-MetaTable = bu.data_table(source=MetaSource,
-                            width=600)
-MetaTable.name = "MetaTable"
-
-ChosenSource = ColumnDataSource()
-ChosenSource.name = "ChosenSource"
-ChosenTable = bu.data_table(source=ChosenSource,
-                            width=900)
-ChosenTable.name = "ChosenTable"
 
 layout = column(row(Config),
                 Above, Here,
@@ -218,8 +202,6 @@ layout = column(row(Config),
                 row(bu.child_in_widgetbox(dir_table),
                     bu.child_in_widgetbox(files_table)),
                 MessageBox,
-                row(bu.child_in_widgetbox(MetaTable),
-                    bu.child_in_widgetbox(ChosenTable)),
              )
 
 curdoc().add_root(layout)
@@ -235,6 +217,7 @@ def get_function_name(stackpos=1):
     return caller
 
 def session_update():
+    global session
     d = curdoc()
     msg = get_function_name()
     msg += "\n%s" % (session.id,)
@@ -265,7 +248,12 @@ def session_diagnostics(session):
         msg += "\n%s: %s" % (str(k), str(v))
     logger = logging.getLogger(__name__)
     logger.info(msg)
-
+    from bokeh.util.browser import get_browser_controller
+    
+    from bokeh.settings import settings    
+    browser = settings.browser(None)    
+    controller = get_browser_controller(browser=browser)
+    print (dir(controller))
 
 def on_server_loaded(server_context):
     ''' If present, this function is called when the server first starts. '''
@@ -279,19 +267,17 @@ def on_server_unloaded(server_context):
 def on_session_created(session_context):
     ''' If present, this function is called when a session is created. '''
     print( "Session Created")
-    pass
+
 
 def on_session_destroyed(session_context):
     ''' If present, this function is called when a session is closed. '''
     print ("Session Destroyed")
-    pass
+
 
 if __name__ == "__main__":
     currentdoc = curdoc()
     session = push_session(curdoc())
     curdoc().add_periodic_callback(session_update, 2000)
     session.show(layout)
-    res = session_diagnostics(session)
-    from bokeh.util.browser import get_browser_controller
-    controller = get_browser_controller(browser=browser)
+    session_diagnostics(session)
     session.loop_until_closed()

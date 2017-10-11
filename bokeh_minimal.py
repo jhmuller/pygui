@@ -69,7 +69,6 @@ layout = column(MessageBox,
 oldcurdoc = bio.curdoc()
 currentstate = bio.curstate()
 TheDoc = Document(title="NewDoc")
-#res = bio.set_curdoc(newdoc)
 TheDoc.add_root(layout)
 
 
@@ -109,7 +108,6 @@ def session_diagnostics(session):
     logger = logging.getLogger(__name__)
     logger.info(msg)
     from bokeh.util.browser import get_browser_controller
-    controller = get_browser_controller(browser=browser)
 
     #controller.close(server_url + "?bokeh-session-id=" + _encode_query_param(session.id))
 

@@ -8,6 +8,7 @@ import numpy as np
 import datetime
 import inspect
 import patsy
+from collections import OrderedDict
 from bokeh.layouts import row, column, widgetbox, Spacer
 from bokeh.models.widgets.markups import Paragraph
 from bokeh.plotting import figure, show
@@ -36,21 +37,21 @@ def config():
 
 def column_data_source_data_from_df(df,
                                     index_key=None):
-    data = {}
-    if index_key is not None:
-        data[index_key] = df.index
-    for c in df.columns:
-        data[c] = df[c]
+    data = source_data_from_df(df)
     return data
 
 def source_data_from_df(df,
                         index_key=None):
-    data = {}
+    data = OrderedDict()
+    keys = list(df.columns)
     if index_key is not None:
+        keys.insert(0, index_key)
         data[index_key] = df.index
-    for c in df.columns:
-        data[c] = df[c]
-    return data
+    for i, key in enumerate(list(df.columns)):
+        data[key] = df[key]
+        print (i, key)
+    return data    
+
 
 def source_data_from_list(lst, key):
     data = {key:lst}
@@ -70,25 +71,34 @@ def column_width(lst):
     return pixlen
 
 def table_columns_from_source(source,
+                              columns=None,
                               titlemap=None):
     titlemap = ({} if not isinstance(titlemap, dict)
                 else titlemap)
+    columns = (source.data.keys() if columns is None
+               else columns)
     tcols = []
-    for k, v in source.data.items():
-        title = titlemap.get(k, k)
-        width = column_width(source.data[k])
-        tc = TableColumn(field=k,
-                         title=title,
-                         width=width)
-        tcols.append(tc)
+    for i, key in enumerate(columns):
+        print (i, key)
+        kwargs = dict(field = key,
+                      title = titlemap.get(key, key),
+                        width = column_width(source.data[key]))
+        isfloat =  re.search("float", str(type(source.data[key][0])))
+        if isfloat is not None:
+            #kwargs['formatter'] = NumberFormatter(format="0,0.000")
+            pass
+        tc = TableColumn(**kwargs)
+        tcols.append(tc),
     return tcols
 
 def data_table(source,
+               columns=None,
                titlemap=None,
                width=400,
                height=500,
                fit_columns=False):
     tcols = table_columns_from_source(source,
+                                      columns=columns,
                                       titlemap=titlemap)
     kwargs = dict(source=source,
                   columns=tcols,
@@ -127,23 +137,24 @@ def ser_types(ser):
     return res
 
 def panda_types(df):
-    res = pd.DataFrame(df.dtypes, columns=["PanType"])
-    res['PanType'] = [str(x) for x in res['PanType']]
+    res = pd.DataFrame(df.dtypes, columns=["PandaType"])
+    res['PandaType'] = [str(x) for x in res['PandaType']]
     res['Column'] = res.index
     return res
 
 def python_types(df):
     res = pd.DataFrame(df.apply(ser_types), columns=["PyTypes"])
-    res['NumPyTypes'] = res['PyTypes'].apply(lambda x: len(x.split(',')))
+    res['PyTypesCnt'] = res['PyTypes'].apply(lambda x: len(x.split(',')))
     res['Column'] = res.index
     return res
 
 def makelist(obj):
     res = obj
-    res = (res if isinstance(res, (list))
-               else res)
     res = ([] if res is None
-               else res)
+           else res)    
+    res = (res if isinstance(res, (list))
+               else [res])
+
     return res
 
 def reorder_df_columns(df,
@@ -151,13 +162,14 @@ def reorder_df_columns(df,
                     atend=None):
     atstart = makelist(atstart)
     atend = makelist(atend)
-    inset['start'] = set(atstart)
-    inset['end'] = set(atend)
-    colset = set(df.columns)
+    inset = {}
+    inset['atstart'] = set(atstart)
+    inset['atend'] = set(atend)
+    colset = set([str(c) for c in list(df.columns)])
     msg = ''
     for name, theset in inset.iteritems():
-        if colset.intersection(startset) != startset:
-            msg += "%s is not a subset of the columns "
+        if colset.intersection(theset) != theset:
+            msg += "%s is not a subset of the columns " % (name,)
     if msg != '':
         raise ValueError(msg)
     if len(inset['atstart'].intersection(inset['atend'])) > 0:
@@ -193,16 +205,24 @@ def generic_types(df):
     res = reorder_df_columns(res, atstart='Column')
     return res
 
+def apply_many(ser):
+    funcmap = {'min': ser.min(),
+               'max': ser.max(),
+               'null' : sum(ser.isnull()),
+               'notnull':  sum(ser.notnull()),
+               'unique' : len(ser.unique()),
+               }    
+    
 def df_stats(df):
-    funcmap = {'min': r.min(),
-               'max': r.max(),
-               'null' : sum(r.isnull()),
-               'notnull':  sum(r.notnull()),
-               'unique' : len(r.unique()),
-                }
-    res = df.apply(lambda r: pd.Series(funcmap)).transpose()
+    res = df.apply(lambda ser: pd.Series({'min': ser.min(),
+                                        'max': ser.max(),
+                                        'null' : sum(ser.isnull()),
+                                        'notnull':  sum(ser.notnull()),
+                                        'unique' : len(ser.unique()),
+                                        })).transpose()
+    datacols = list(res.columns)
     res['Column'] = res.index
-    res = res[['Column'] + funcmap.keys()]
+    res = res[['Column'] + datacols]
     return res
 
 def df_summary(df):
@@ -218,6 +238,7 @@ def df_summary(df):
     stats = df_stats(df)
     res = pd.merge(temp, stats, how='outer',
                     on='Column')
+    res = reorder_df_columns(res, atstart='Column')    
     return res
 
 
@@ -227,7 +248,8 @@ def update_source_data(dom, source, df):
         dom.set_select(selector=dict(name=source.name),
                           updates=dict(data=data),)
 
-def update_table_source(dom, table,
+def update_table_source(dom,
+                        table,
                         width=500,
                         height=None):
         old_table = dom.select_one(dict(name=table.name))
@@ -240,6 +262,21 @@ def update_table_source(dom, table,
             kwargs['height'] = height
         dom.set_select(**kwargs)
 
+
+def update_table_columns(dom,
+                        table,
+                        columns,
+                        width=500,
+                        height=None):
+    old_table = dom.select_one(dict(name=table.name))
+    tcols = table_columns_from_source(table.source,columns=columns)
+    kwargs = dict(selector=dict(name=table.name),
+                  updates=dict(columns=tcols,
+                               fit_columns=False,
+                               width=width))
+    if height is not None:
+        kwargs['height'] = height
+    dom.set_select(**kwargs)
 
 def list_from_path(path):
     plist = []
